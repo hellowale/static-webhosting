@@ -1,0 +1,47 @@
+name: Deploy PR
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Login to DockerHub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build and push Docker image
+        run: |
+          docker build -t yourusername/static-webhosting:${{ github.sha }} .
+          docker push yourusername/static-webhosting:${{ github.sha }}
+
+      - name: Deploy to Server
+        run: |
+          ssh -o StrictHostKeyChecking=no user@server "docker pull yourusername/static-webhosting:${{ github.sha }} && \
+            docker rm -f $(docker ps -q --filter ancestor=yourusername/static-webhosting:${{ github.sha }}) || true && \
+            docker run -d -p 80:80 yourusername/static-webhosting:${{ github.sha }}"
+
+      - name: Post deployment status
+        if: github.event_name == 'pull_request'
+        run: |
+          curl -X POST -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+          -d '{"body": "Deployed to http://your-server-url"}' \
+          "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.number }}/comments"
+
+      - name: Cleanup on PR close
+        if: github.event.action == 'closed'
+        run: |
+          ssh -o StrictHostKeyChecking=no user@server "docker rm -f $(docker ps -q --filter ancestor=yourusername/static-webhosting:${{ github.sha }})"
+
+
